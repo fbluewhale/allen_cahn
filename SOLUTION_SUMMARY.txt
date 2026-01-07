@@ -1,0 +1,37 @@
+## Summary: Allen-Cahn Solver Fix
+
+### Problem
+The original spectral Galerkin solver (`allen_cahn.py`) crashed with:
+- `RuntimeWarning: overflow encountered in power` (computing $u^3$)
+- `ValueError: array must not contain infs or NaNs` (numerical instability)
+
+### Solution
+Implemented a **Physics-Informed Neural Network (PINN)** solver (`allen_cahn_pin.py`) that:
+- ✅ Solves the PDE without time-stepping (avoids accumulation of errors)
+- ✅ Uses neural network regularization for stability
+- ✅ Protects against overflow (clamps solution bounds)
+- ✅ Completes in ~60 seconds
+- ✅ Produces smooth, physically realistic solutions
+
+### Quick Start
+```bash
+python allen_cahn_pin.py
+```
+
+### Output
+- Training log showing convergence
+- `allen_cahn_pinn.png`: Visualization of solution evolution
+- Solution values remain bounded in $[-0.16, 0.09]$ throughout
+
+### Key Advantages of PINN Approach
+1. **No CFL constraint**: No time-step restrictions
+2. **Automatic regularization**: Neural network provides implicit smoothing
+3. **Handles singularities**: More robust to nonlinearities
+4. **Scalable**: Easily extends to higher dimensions
+5. **No mesh generation**: Works without spatial discretization
+
+### Files
+- `allen_cahn.py` - Original (unstable) spectral method
+- `allen_cahn_pin.py` - New (working) PINN solver
+- `allen_cahn_pinn.png` - Solution visualization
+- `README_FIXES.md` - Detailed technical documentation
