@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 class FastAllenCahnPINN:
     """Ultra-fast PINN for Allen-Cahn using shallow network."""
     
-    def __init__(self, eps=0.01, layers=(2, 32, 1)):
+    def __init__(self, eps=0.01, layers=(2, 96, 1)):
         """
         Initialize the PINN with shallow network.
         
@@ -113,10 +113,8 @@ class FastAllenCahnPINN:
         """Compute total loss."""
         self._unpack_params(params)
         
-        # PDE loss (subset)
-        n_pde = min(len(x_pde), 50)
-        idx_pde = np.random.choice(len(x_pde), n_pde, replace=False)
-        residuals = np.array([self.pde_residual(x_pde[i], t_pde[i]) for i in idx_pde])
+        # PDE loss (deterministic over all points for stable optimization)
+        residuals = np.array([self.pde_residual(x_pde[i], t_pde[i]) for i in range(len(x_pde))])
         loss_pde = np.mean(residuals**2)
         
         # IC loss
@@ -140,12 +138,12 @@ class FastAllenCahnPINN:
         def callback(params):
             call_count[0] += 1
             if call_count[0] % 50 == 0:
-                loss = self.loss_function(params, x_pde, t_pde, x_ic, t_ic, u_ic)
+                loss = self.loss_function(params, x_pde, t_pde, x_ic, t_ic, u_ic, w_ic=20.0)
                 print(f"  Iter {call_count[0]:3d}: Loss = {loss:.6e}")
         
         print("Training PINN (L-BFGS-B)...")
         result = minimize(
-            lambda p: self.loss_function(p, x_pde, t_pde, x_ic, t_ic, u_ic, w_ic=10.0),
+            lambda p: self.loss_function(p, x_pde, t_pde, x_ic, t_ic, u_ic, w_ic=20.0),
             params,
             method='L-BFGS-B',
             callback=callback,
@@ -159,9 +157,9 @@ class FastAllenCahnPINN:
 def solve_allen_cahn_pinn(
     eps=0.02,
     T=0.2,
-    N_pde=300,
-    N_ic=50,
-    epochs=200,
+    N_pde=800,
+    N_ic=150,
+    epochs=600,
     u0_func=None,
     n_snapshots=5
 ):
@@ -179,7 +177,7 @@ def solve_allen_cahn_pinn(
         u0_func = lambda x: (x**2) * np.cos(np.pi * x)
     
     print("Initializing PINN...")
-    pinn = FastAllenCahnPINN(eps=eps, layers=(2, 32, 1))
+    pinn = FastAllenCahnPINN(eps=eps, layers=(2, 48, 1))
     
     # Training data
     x_pde = np.random.uniform(-1, 1, N_pde)
@@ -222,12 +220,12 @@ if __name__ == "__main__":
     
     # Solve
     xs, snaps = solve_allen_cahn_pinn(
-        eps=0.02,
+        eps=0.01,
         T=0.2,
-        N_pde=300,
-        N_ic=50,
-        epochs=200,
-        n_snapshots=5
+        N_pde=800,
+        N_ic=100,
+        epochs=500,
+        n_snapshots=25
     )
     
     # Visualize
