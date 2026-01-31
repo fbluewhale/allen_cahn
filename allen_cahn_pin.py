@@ -12,6 +12,7 @@ Dependencies: numpy, scipy, matplotlib
 
 import numpy as np
 from scipy.optimize import minimize, differential_evolution
+from scipy.special import eval_jacobi
 import matplotlib.pyplot as plt
 
 
@@ -32,6 +33,16 @@ class FastAllenCahnPINN:
         self.eps = eps
         self.layers = layers
         self._init_weights()
+    
+    def jacobi_activation(self, x):
+        """
+        Jacobi polynomial activation function.
+        Uses Jacobi polynomial P_3^(0,0)(x) scaled to input range [-1, 1].
+        """
+        # Clip x to [-1, 1] for numerical stability
+        x_clipped = np.clip(x, -1.0, 1.0)
+        # Apply Jacobi polynomial P_n^(alpha, beta) with n=3, alpha=0, beta=0
+        return eval_jacobi(3, 0, 0, x_clipped)
     
     def _init_weights(self):
         """Initialize network weights."""
@@ -72,10 +83,10 @@ class FastAllenCahnPINN:
         t_n = np.clip(t, 0.0, 1.0)
         z = np.array([[x_n, t_n]])
         
-        # Hidden layers with ReLU
+        # Hidden layers with Jacobi activation
         for i in range(len(self.W) - 1):
             z = np.dot(z, self.W[i]) + self.b[i]
-            z = np.maximum(z, 0.0)
+            z = np.vectorize(self.jacobi_activation)(z)
         
         # Output layer
         u = np.dot(z, self.W[-1]) + self.b[-1]
