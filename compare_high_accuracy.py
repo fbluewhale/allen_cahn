@@ -231,6 +231,20 @@ def make_loss_fn(forward_fn, eps, h=0.002):
 
     return loss
 
+def compute_residual(forward_fn, params, x, t, eps, h=0.002):
+    """Compute the PDE residual at given points (x, t)."""
+    u    = forward_fn(params, x, t)
+    u_tp = forward_fn(params, x, np.minimum(t + h, 1.0))
+    u_tm = forward_fn(params, x, np.maximum(t - h, 0.0))
+    u_t  = (u_tp - u_tm) / (2 * h)
+
+    u_xp = forward_fn(params, np.minimum(x + h, 1.0), t)
+    u_xm = forward_fn(params, np.maximum(x - h, -1.0), t)
+    u_xx = (u_xp - 2 * u + u_xm) / h ** 2
+
+    res = u_t - eps ** 2 * u_xx + u ** 3 - u
+    return res
+
 
 def flatten(params):
     """Flatten list of arrays into 1-D vector."""
@@ -373,9 +387,12 @@ def main():
     pinn_snaps = [onp.array(pinn_forward(pinn_params, xs, onp.full_like(xs, tv)))
                   for tv in snap_t]
     pinn_l2 = rel_l2(pinn_snaps, fd_snaps)
-    print(f"  loss={pinn_loss:.6e}  L2={pinn_l2:.6e}  time={pinn_time:.1f}s\n")
+    pinn_res_snaps = [onp.array(compute_residual(pinn_forward, pinn_params, xs, onp.full_like(xs, tv), eps_val))
+                      for tv in snap_t]
+    pinn_res_l2 = onp.sqrt(onp.mean(onp.concatenate([s.ravel()**2 for s in pinn_res_snaps])))
+    print(f"  loss={pinn_loss:.6e}  L2={pinn_l2:.6e}  ResL2={pinn_res_l2:.6e}  time={pinn_time:.1f}s\n")
     solvers["PINN"] = {"loss": pinn_loss, "l2": pinn_l2, "time": pinn_time,
-                       "nparams": pinn_nparams, "snaps": pinn_snaps}
+                       "nparams": pinn_nparams, "snaps": pinn_snaps, "res_snaps": pinn_res_snaps, "res_l2": pinn_res_l2}
 
     # 2) PIKAN-Jacobi — order=6, α=−0.5, β=−0.5
     print("[2/3] PIKAN-Jacobi  (2,20,20,1)  order=6  α=-0.5  β=-0.5 …")
@@ -393,9 +410,12 @@ def main():
                                          onp.full_like(xs, tv)))
                 for tv in snap_t]
     pj_l2 = rel_l2(pj_snaps, fd_snaps)
-    print(f"  loss={pj_loss:.6e}  L2={pj_l2:.6e}  time={pj_time:.1f}s\n")
+    pj_res_snaps = [onp.array(compute_residual(lambda params, x, t: pikanj_forward(params, pj_meta, x, t), pj_params, xs, onp.full_like(xs, tv), eps_val))
+                    for tv in snap_t]
+    pj_res_l2 = onp.sqrt(onp.mean(onp.concatenate([s.ravel()**2 for s in pj_res_snaps])))
+    print(f"  loss={pj_loss:.6e}  L2={pj_l2:.6e}  ResL2={pj_res_l2:.6e}  time={pj_time:.1f}s\n")
     solvers["PIKAN-Jacobi"] = {"loss": pj_loss, "l2": pj_l2, "time": pj_time,
-                               "nparams": pj_nparams, "snaps": pj_snaps}
+                               "nparams": pj_nparams, "snaps": pj_snaps, "res_snaps": pj_res_snaps, "res_l2": pj_res_l2}
 
     # 3) PIKAN-Spline — 9-knot piecewise-linear (autograd-friendly)
     print("[3/3] PIKAN-Spline  (2,20,20,1)  9 knots …")
@@ -412,9 +432,12 @@ def main():
                                          onp.full_like(xs, tv)))
                 for tv in snap_t]
     ps_l2 = rel_l2(ps_snaps, fd_snaps)
-    print(f"  loss={ps_loss:.6e}  L2={ps_l2:.6e}  time={ps_time:.1f}s\n")
+    ps_res_snaps = [onp.array(compute_residual(lambda params, x, t: pikans_forward(params, ps_meta, x, t), ps_params, xs, onp.full_like(xs, tv), eps_val))
+                    for tv in snap_t]
+    ps_res_l2 = onp.sqrt(onp.mean(onp.concatenate([s.ravel()**2 for s in ps_res_snaps])))
+    print(f"  loss={ps_loss:.6e}  L2={ps_l2:.6e}  ResL2={ps_res_l2:.6e}  time={ps_time:.1f}s\n")
     solvers["PIKAN-Spline"] = {"loss": ps_loss, "l2": ps_l2, "time": ps_time,
-                               "nparams": ps_nparams, "snaps": ps_snaps}
+                               "nparams": ps_nparams, "snaps": ps_snaps, "res_snaps": ps_res_snaps, "res_l2": ps_res_l2}
 
     # ── results table ─────────────────────────────────────────────────────
     names = list(solvers.keys())
@@ -426,6 +449,7 @@ def main():
         ("# Parameters", "nparams", ",d"),
         ("Final loss", "loss", ".4e"),
         ("Rel. L₂ error vs FD", "l2", ".4e"),
+        ("L₂ Residual Error", "res_l2", ".4e"),
         ("Training time (s)", "time", ".1f"),
     ]:
         print(f"{label:<28}", end="")
@@ -437,8 +461,8 @@ def main():
 
     best_l2 = min(names, key=lambda n: solvers[n]["l2"])
     best_time = min(names, key=lambda n: solvers[n]["time"])
-    print(f"\n  ✓ Most accurate → {best_l2}")
-    print(f"  ✓ Fastest       → {best_time}\n")
+    print(f"\n  ✓ Most accurate (L2 sol) → {best_l2}")
+    print(f"  ✓ Fastest                → {best_time}\n")
 
     # ── plots ─────────────────────────────────────────────────────────────
     plot_data = {"FD Ref": fd_snaps}
@@ -446,8 +470,9 @@ def main():
     plot_names = ["FD Ref"] + names
     ncols = len(plot_names)
 
-    fig, axes = plt.subplots(2, ncols, figsize=(6 * ncols, 10))
+    fig, axes = plt.subplots(3, ncols, figsize=(6 * ncols, 15))
     for col, pname in enumerate(plot_names):
+        # Solution plots
         ax = axes[0, col]
         for i, tv in enumerate(snap_t):
             ax.plot(xs, plot_data[pname][i], lw=2, label=f"t={tv:.3f}")
@@ -455,12 +480,29 @@ def main():
         ax.set_title(pname, fontsize=13, fontweight="bold")
         ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
 
+        # Heatmap of solution
         ax = axes[1, col]
         mat = onp.array(plot_data[pname])
         im = ax.contourf(xs, snap_t, mat, levels=20, cmap="RdBu_r")
         plt.colorbar(im, ax=ax, label="u")
         ax.set_xlabel("x"); ax.set_ylabel("t")
         ax.set_title(f"{pname} heatmap", fontsize=12)
+    
+        # Residual plots (only for models, not FD Ref)
+        if pname != "FD Ref":
+            ax = axes[2, col]
+            for i, tv in enumerate(snap_t):
+                ax.plot(xs, onp.abs(solvers[pname]["res_snaps"][i]), lw=1.5, label=f"t={tv:.3f}")
+            ax.set_xlabel("x"); ax.set_ylabel("|Residual|")
+            ax.set_title(f"{pname} residual", fontweight="bold")
+            ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
+        else:
+            # For FD Ref, plot zeros for residual or leave blank
+            ax = axes[2, col]
+            ax.plot(xs, onp.zeros_like(xs), lw=1.5, ls='--', color='gray', label='Ideal Residual = 0')
+            ax.set_xlabel("x"); ax.set_ylabel("|Residual|")
+            ax.set_title("FD Ref residual", fontweight="bold")
+            ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
 
     fig.suptitle("High-Accuracy:  PINN vs PIKAN-Spline vs PIKAN-Jacobi",
                  fontsize=14, fontweight="bold", y=1.01)
@@ -469,7 +511,7 @@ def main():
     print("Saved → compare_high_accuracy.png")
     plt.close()
 
-    # error curves
+    # error curves (solution error)
     fig2, axes2 = plt.subplots(1, len(names), figsize=(6*len(names), 5))
     for col, name in enumerate(names):
         ax = axes2[col]
@@ -478,11 +520,26 @@ def main():
                 onp.array(solvers[name]["snaps"][i]) - fd_snaps[i]),
                 lw=1.5, label=f"t={tv:.3f}")
         ax.set_xlabel("x"); ax.set_ylabel("|error|")
-        ax.set_title(f"{name} error vs FD", fontweight="bold")
+        ax.set_title(f"{name} solution error vs FD", fontweight="bold")
         ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig("compare_high_accuracy_errors.png", dpi=150, bbox_inches="tight")
-    print("Saved → compare_high_accuracy_errors.png\n")
+    plt.savefig("compare_high_accuracy_solution_errors.png", dpi=150, bbox_inches="tight")
+    print("Saved → compare_high_accuracy_solution_errors.png\n")
+    plt.close()
+
+    # error curves (residual error)
+    fig3, axes3 = plt.subplots(1, len(names), figsize=(6*len(names), 5))
+    for col, name in enumerate(names):
+        ax = axes3[col]
+        for i, tv in enumerate(snap_t):
+            ax.plot(xs, onp.abs(solvers[name]["res_snaps"][i]),
+                lw=1.5, label=f"t={tv:.3f}")
+        ax.set_xlabel("x"); ax.set_ylabel("|Residual|")
+        ax.set_title(f"{name} residual error", fontweight="bold")
+        ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig("compare_high_accuracy_residual_errors.png", dpi=150, bbox_inches="tight")
+    print("Saved → compare_high_accuracy_residual_errors.png\n")
     plt.close()
 
 
